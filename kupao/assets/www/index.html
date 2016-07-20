@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+
+	<head>
+		<meta charset="utf-8" />
+		<title></title>
+		<link rel="stylesheet" type="text/css" href="css/bootstrap.css" />
+		<link rel="stylesheet" type="text/css" href="css/webim.css" />
+		<script src="sdk/jquery-2.2.3.js" type="text/javascript" charset="utf-8"></script>
+		<script src="sdk/strophe.js" type="text/javascript" charset="utf-8"></script>
+		<script src="sdk/easemob.im-1.0.7.js" type="text/javascript" charset="utf-8"></script>
+		<script src="sdk/easemob.im.config.js" type="text/javascript" charset="utf-8"></script>
+		<script src="sdk/bootstrap.js" type="text/javascript" charset="utf-8"></script>
+		<script type="text/javascript">
+			//全局connection连接环信服务器的框架
+			var connection;
+			//全局
+			var currentFriendName;
+			//当前登录的用户名
+			var currentUser;
+
+			function register() {
+				console.log("register");
+				//1,接收用户名，密码，呢称
+				var username = $("#register_username").val();
+				var pwd = $("#register_password").val();
+				var nickName = $("#register_nickname").val();
+				//2,去掉空格
+				username = $.trim(username);
+				pwd = $.trim(pwd);
+				nickName = $.trim(nickName);
+				//3,验证用户名，密码，呢称是否为空
+				if(username == "" || pwd == "" || nickName == "") {
+					window.alert("用户名，密码，呢称不能为空");
+				} else {
+					//4,发给环信服务器
+					var sendData = {
+						appKey: Easemob.im.config.appkey,
+						username: username,
+						password: pwd,
+						nickname: nickName,
+						success: function(data) {
+							window.alert("成功");
+						},
+						error: function(e) {
+							console.log("注册出错了");
+							console.log(e);
+						}
+					};
+					//调环信sdk来注册
+					Easemob.im.Helper.registerUser(sendData);
+				}
+
+			}
+			//登录执行顺序2：执行登录操作
+			function login() {
+				$("#login_div").modal("hide");
+				$("#loginProgressDiv").modal("show");
+
+				var username = $("#login_username").val();
+				var pwd = $("#login_password").val();
+				var sendData = {
+						appKey: Easemob.im.config.appkey,
+						user: username,
+						pwd: pwd
+					}
+					//通过connection框架连接环信服务器，发登录信息
+					//登录有结果，执行connection注册的callback.onOPened函数
+				connection.open(sendData);
+			}
+
+			function load() {
+				//事件绑定
+				$("#regiterBtn").click(register);
+				//显示第一个modal
+				$("#login_div").modal("show");
+				connection = new Easemob.im.Connection();
+				var callback = {
+					onTextMessage: function(msg) {
+						//好友发过来内容
+						var friendName = msg.from;
+						var content = msg.data;
+						console.log(friendName + ":" + content);
+						showChatMsg(friendName, content);
+					},
+					url: Easemob.im.config.xmppURL,
+					onOpened: function() {
+						//得到当前登录的用户
+						currentUser = connection.context.userId;
+						//登录执行顺序3：connection框调运行回调函数
+						//已经打开连接，登录成功
+						console.log("登录成功");
+						//告诉服务器我在线
+						connection.setPresence();
+						//发送心跳包,不加心跳包，收不到服务器推送的消息
+						connection.heartBeat(connection);
+						$("#loginProgressDiv").modal("hide");
+						//显示我的好友div
+						$("#myFriendDiv").modal("show");
+
+						//得好友
+						var callback = {
+							success: function(roster) {
+								console.log(roster);
+								showFriend(roster);
+							}
+						};
+						//刚刚登录成功，客户端可能没有拿到所有的好友信息
+						//等客户端成功拿到所有好友信息，框架调回调指定的函数
+						connection.getRoster(callback);
+					},
+					onError: function(e) {
+						console.log(e);
+					},
+					onPresence: function(info, msgInfo) {
+						console.log("onPresence")
+							//presence:好友同意或不同意的信息时，被回调
+						console.log(info);
+						console.log(msgInfo);
+						//好友同意了，好友还要请求我成为他的好友。我自动同意。
+						if(info.type == "subscribe") {
+							//判断有没有status属性
+							if(info.status) {
+								//判断info.status中有没有[resp:true]
+								if(info.status.indexOf("[resp:true]") >= 0) {
+									//好友同意了
+									//通过connection发信息给服务器,我同意
+									//取到好友的名字
+									var friendName = info.from;
+									connection.subscribed({
+										to: friendName,
+										message: "[resp:true]",
+									});
+
+								}
+							}
+						}
+
+					},
+					onRoster: function(roster) {
+						//添加好友后，服务器发过好友名单，被回调，运行
+						console.log("onRoster")
+						console.log(roster);
+						showFriend(roster);
+
+					}
+				};
+				//登录执行顺序1：设置回调对象
+				connection.init(callback);
+
+				//设置登录按钮事件处理函数
+				$("#loginBtn").click(login);
+				//登录界面有跳到注册的按钮
+				$("#toRegisterViewBtn").click(showRegiterView);
+
+				$("#toLoginViewBtn").click(showLoginView);
+				$("#addFriendBtn").click(addFriend);
+			}
+
+			function showRegiterView() {
+				$("#login_div").modal("hide");
+				$("#register_div").modal("show");
+			}
+
+			function showLoginView() {
+				$("#register_div").modal("hide");
+
+				$("#login_div").modal("show");
+			}
+
+			function showAddFriedDiv() {
+				$("#addFriendDiv").modal("show");
+			}
+			$(document).ready(load);
+
+			function addFriend() {
+				//1：从view上接收数据
+				var friendUsname = $("#addFriend_friendName").val();
+				var message = $("#addFriend_message").val();
+				//2:创建对象
+				var sendData = {
+					to: friendUsname,
+					message: message
+				};
+				//3,调环信框架中connection给服务器发消息
+				connection.subscribe(sendData);
+			}
+
+			function showFriend(roster) {
+				//判断是互为好友
+				for(var i = 0; i < roster.length; i++) {
+					var friend = roster[i];
+					if(friend.subscription == "both") {
+						//创建显示头像的img标签
+						var $img = $("<img>");
+						$img.attr({
+							"src": "img/head/contact_normal.png"
+						});
+						//创建显示用户名的span
+						var $span = $("<span>");
+						$span.html(friend.name);
+						//创建li标签
+						var $li = $("<li>");
+						$li.attr({
+							"id": friend.name,
+							"class": "offline"
+						});
+						//把img,span放到li中
+						$li.append($img);
+						$li.append($span);
+						//为li添加单击事件
+						$li.click(
+							function() {
+								//this代表的是单击的li
+								//window.alert("li "+this.id);
+								//隐藏modal
+								$("#myFriendDiv").modal("hide");
+								//显示聊天界面
+								var $chatDiv = $("#chat");
+								$chatDiv.css({
+									"display": "block"
+								});
+								var li = this;
+								currentFriendName = li.id;
+								//在聊天界面显示好友名字
+								//找到span
+								var $span = $("#friendName");
+								//设置内容
+								$span.html(currentFriendName);
+							}
+						);
+						//把li放到ul
+						var $ul = $("#myFriendUl");
+						$ul.append($li);
+
+					}
+				}
+
+			}
+
+			function sendText() {
+				//接收要发的内容
+				$textarea = $("#body");
+				var content = $textarea.val();
+				var data = {
+					to: currentFriendName,
+					msg: content,
+					type: chat
+				};
+				//联网发送
+				connection.sendTextMessage(data);
+				$textarea.val("");
+				//得到焦点
+				$textarea.focus();
+
+				//显示聊天内容
+				showChatMsg(currentUser, content);
+			}
+
+			//user:聊天内容谁说的
+			//msg:说的内容
+			function showChatMsg(user, msg) {
+				//创建容器显示msg
+				$div = $("<div>");
+				//判断是不是我说的，如果是好友说的
+				if(user != currentUser) {
+					//好友说的,显示在左边
+					$div.html(user + ":" + msg);
+					$div.css({
+						"text-align": "left",
+						"font-size": "36px",
+						"margin": "20px"
+					});
+				} else {
+					$div.html(msg);
+					$div.css({
+						"text-align": "right",
+						"font-size": "36px",
+						"margin": "20px"
+					});
+				}
+
+				//把$div放到屏幕上
+				$("#chat_cotent").append($div);
+				//自动向上移动内容
+				//scrollHeight是dom对象的属性
+				//把jquery对象转成dom对象
+				var chat_contentDiv=$("#chat_cotent")[0];
+				var scrollHeight=chat_contentDiv.scrollHeight;
+				console.log(scrollHeight);
+				chat_contentDiv.scrollTop=scrollHeight;
+			}
+		</script>
+	</head>
+
+	<body>
+		<div id="login_div" class="modal hide">
+			<div class="modal-header">
+				<h4>登录</h4>
+			</div>
+			<div class="modal-body">
+				<table>
+					<tr>
+						<td align="right">用户名</td>
+						<td><input type="text" id="login_username"></td>
+					</tr>
+					<tr>
+						<td align="right">密码</td>
+						<td><input type="password" id="login_password"></td>
+					</tr>
+				</table>
+			</div>
+			<div class="modal-footer">
+				<input type="button" class="btn btn-success" value="登录" id="loginBtn" />
+				<input type="button" class="btn btn-success" value="注册" id="toRegisterViewBtn" />
+
+			</div>
+		</div>
+		<div id="register_div" class="modal hide">
+			<div class="modal-header">
+				<h4>注册</h4>
+			</div>
+			<div class="modal-body">
+				<table>
+					<tr>
+						<td align="right">用户名</td>
+						<td><input type="text" id="register_username"></td>
+					</tr>
+					<tr>
+						<td align="right">密码</td>
+						<td><input type="password" id="register_password"></td>
+					</tr>
+					<tr>
+						<td align="right">呢称</td>
+						<td><input type="text" id="register_nickname"></td>
+					</tr>
+				</table>
+			</div>
+			<div class="modal-footer">
+				<input type="button" class="btn btn-success" value="注册" id="regiterBtn" />
+				<input type="button" class="btn btn-success" value="登录" id="toLoginViewBtn" />
+
+			</div>
+		</div>
+
+		<div id="loginProgressDiv" class="modal hide">
+			<div class="wait-login">
+				<img src="img/waitting.gif" />正在努力为你加载...
+			</div>
+
+		</div>
+		<!--显示我的好友-->
+		<div id="myFriendDiv" class="modal hide">
+			<div class="modal-header">
+				<span>我的好友</span>
+				<span style="float: right;">
+				<div class="dropdown">
+					<button style="margin-right: 100px;" data-toggle="dropdown">添加</button>
+					<ul class="dropdown-menu">
+						<li><a href="javascript:;" onclick="showAddFriedDiv()">添加好友</a></li>
+						<li><a>删除好友</a></li>
+						<li><a>退出</a></li>
+					</ul>
+				</div>
+					
+				</span>
+			</div>
+			<div class="modal-body">
+				<ul id="myFriendUl">
+
+				</ul>
+			</div>
+		</div>
+
+		<!--添加好友-->
+		<div id="addFriendDiv" class="modal hide">
+			<div class="modal-header">
+				<h4>添加好友</h4>
+			</div>
+			<div class="modal-body">
+				<table>
+					<tr>
+						<td align="right">好友名称:</td>
+						<td><input type="text" id="addFriend_friendName"></td>
+					</tr>
+					<tr>
+						<td align="right">消息:</td>
+						<td><input type="text" id="addFriend_message"></td>
+					</tr>
+				</table>
+			</div>
+			<div class="modal-footer">
+				<button class="btn btn-success" id="addFriendBtn">添加好友</button>
+				<button class="btn btn-warning" data-dismiss="modal">取消</button>
+
+			</div>
+		</div>
+		<!--聊天界面-->
+		<div id="chat" style="display: none;">
+			<div id="firendName" class="chat_title">
+				<img src="img/head/contact_normal.png" />
+				<span id="friendName" style="font-size: 36px;color: white;"></span>
+			</div>
+			<div id="chat_cotent" class="chat_content">
+
+			</div>
+			<div id="chat_input" class="chat_input">
+				<textarea id="body" style="width: 100%;"></textarea>
+				<div>
+					<img src="img/send_btn.jpg" onclick="sendText()" />
+				</div>
+			</div>
+		</div>
+	</body>
+
+</html>
